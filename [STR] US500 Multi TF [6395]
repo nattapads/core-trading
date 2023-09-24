@@ -216,7 +216,7 @@ table.cell(table_data, 0, 1, str.tostring("$" + str.tostring(math.round(net_prof
 table.cell(table_data, 0, 2, str.tostring(str.tostring(math.round(percent_profitable * 100, 0)) + "%"), text_size = size.normal, bgcolor = bgSColour, text_color = color.rgb(255, 255, 255), text_halign  = text.align_center, tooltip = "Percent Profitable")
 table.cell(table_data, 0, 3, str.tostring("$" + str.tostring(math.round(strategy.max_drawdown, 0))), text_size = size.normal, bgcolor = color.rgb(242, 54, 69, 30), text_color = color.rgb(255, 255, 255), text_halign  = text.align_center, tooltip = "Max Drawdown")
 table.cell(table_data, 0, 4, str.tostring(str.tostring(math.round(CurrentSize, 1))), bgcolor = color.rgb(255, 255, 255, 90), text_size = size.normal, text_color = color.rgb(255, 255, 255), tooltip = "Current Position")
-table.cell(table_data, 0, 5, str.tostring(str.tostring(math.round(CurrentProportion, 1)) + "%"), bgcolor = color.rgb(255, 255, 255, 90), text_size = size.normal, text_color = color.rgb(255, 255, 255), tooltip = "Percent Risk")
+table.cell(table_data, 0, 5, str.tostring(str.tostring(math.round(CurrentProportion, 0)) + "%"), bgcolor = color.rgb(255, 255, 255, 90), text_size = size.normal, text_color = color.rgb(255, 255, 255), tooltip = "Percent Risk")
 
 //-----------------------------------------------------------------------------}
 //Entry & Exit Signal
