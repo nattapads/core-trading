@@ -1,6 +1,6 @@
 //NSal
 //@version=5
-strategy("[STR] US500 TTC & Stoch [6395]", overlay = true, margin_long = 0.5, margin_short = 0.5, pyramiding = 100, initial_capital = 200, risk_free_rate = 1, slippage = 1)
+strategy("[STR] US500 TTC & Stoch [6395]", overlay = true, margin_long = 0.5, margin_short = 0.5, pyramiding = 100, initial_capital = 10000, risk_free_rate = 1, slippage = 1)
 
 //------------------------------------------------------------------------------
 //Turtle Trade Channels Settings
@@ -30,38 +30,13 @@ showtrend                   = input(false,          title ="Show Momentum Line",
 //-----------------------------------------------------------------------------}
 //Risk Settings
 //-----------------------------------------------------------------------------{
-IniFund                     = input.int(200,        minval = 100, step = 100, title = "Initial Fund", group="Risk Settings")
+IniFund                     = input.int(10000,        minval = 100, step = 100, title = "Initial Fund", group="Risk Settings")
 StdLength                   = input.int(25,         title = "Standard Deviation Length", group="Risk Settings")
 TargetRisk                  = input.float(0.07,      maxval = 1, step = 0.01, title = "Target Risk (%)", group="Risk Settings")
 DeviationPer                = input.float(0.1,      maxval = 1, step = 0.1, title = "Momentum Change Limit (%)", group="Risk Settings")
 SmoothOptLength             = input.int(5,          title = "Smooth Optimal Position Length", group="Risk Settings")
 SmoothOpt                   = input(true,           title="Smooth Optimal Position", group="Risk Settings")
 MarginCal                   = input(true,           title="Margin Account", group="Risk Settings")
-
-//------------------------------------------------------------------------------
-//Session Settings
-//-----------------------------------------------------------------------------{
-sesa_txt        = input('New York', '', inline = 'sesa', group = 'Session Settings')
-sesa_ses        = input.session('1300-1700', '', inline = 'sesa', group = 'Session Settings')
-
-sesb_txt        = input('London', '', inline = 'sesb', group = 'Session Settings')
-sesb_ses        = input.session('0100-1600', '', inline = 'sesb', group = 'Session Settings')
-
-tz_incr         = input.int(0, 'UTC (+/-)', group = 'Session Settings')
-use_exchange    = input(false, 'Use Exchange Timezone', group = 'Session Settings')
-
-//-----------------------------------------------------------------------------}
-//Sessions Calulation
-//-----------------------------------------------------------------------------{
-tf              = timeframe.period
-
-var tz          = use_exchange ? syminfo.timezone :
-  str.format('UTC{0}{1}', tz_incr >= 0 ? '+' : '-', math.abs(tz_incr))
-
-is_sesa         = math.sign(nz(time(tf, sesa_ses, tz)))
-is_sesb         = math.sign(nz(time(tf, sesb_ses, tz)))
-
-is_trading_session = is_sesa + is_sesb
 
 //------------------------------------------------------------------------------
 //Turtle Trade Channels Variables
@@ -243,10 +218,10 @@ RecSize                     = math.round(OptimalPosition - strategy.position_siz
 //Momentum Filter Calculation
 //-----------------------------------------------------------------------------{
 Trenddiff                   = SlowEMA - SlowSEMA
-StrongBullish               = Trenddiff[0] > Trenddiff[1] and Trenddiff >= 0 and is_trading_session
-StrongBearish               = Trenddiff[0] < Trenddiff[1] and Trenddiff < 0 and is_trading_session
-Bullish                     = Trenddiff[0] < Trenddiff[1] and Trenddiff >= 0 and is_trading_session
-Bearish                     = Trenddiff[0] > Trenddiff[1] and Trenddiff < 0 and is_trading_session
+StrongBullish               = Trenddiff[0] > Trenddiff[1] and Trenddiff >= 0
+StrongBearish               = Trenddiff[0] < Trenddiff[1] and Trenddiff < 0
+Bullish                     = Trenddiff[0] < Trenddiff[1] and Trenddiff >= 0
+Bearish                     = Trenddiff[0] > Trenddiff[1] and Trenddiff < 0
 
 //Position Adjustment Signal & Sizing
 //-----------------------------------------------------------------------------{
