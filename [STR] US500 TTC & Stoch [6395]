@@ -1,0 +1,378 @@
+//NSal
+//@version=5
+strategy("[STR] US500 TTC & Stoch [6395]", overlay = true, margin_long = 0.5, margin_short = 0.5, pyramiding = 100, initial_capital = 200, risk_free_rate = 1, slippage = 1)
+
+//------------------------------------------------------------------------------
+//Turtle Trade Channels Settings
+//-----------------------------------------------------------------------------{
+length                      = input.int(20,         "Entry Length", minval=1, group="TTC Settings")
+len2                        = input.int(10,         "Exit Length", minval=1, group="TTC Settings")
+ContrarianEntry             = input(true,           "Contrarian Entry", group="TTC Settings")
+
+//-----------------------------------------------------------------------------}
+//Stochastic Settings
+//-----------------------------------------------------------------------------{
+periodK                     = input.int(14,         '%K Length',        minval=1, group="Stochastic Settings")
+smoothK                     = input.int(3,          '%K Smoothing',     minval=1, group="Stochastic Settings")
+periodD                     = input.int(3,          '%D Smoothing',     minval=1, group="Stochastic Settings")
+stocBuyTh                   = input.int(25,         'Buy Threshold',    minval=1, group="Stochastic Settings")
+stocSellTh                  = input.int(75,         'Sell Threshold',   minval=1, group="Stochastic Settings")
+
+//-----------------------------------------------------------------------------}
+//Momentum  Settings
+//-----------------------------------------------------------------------------{
+FastLength                  = input.int(16,         step = 1, title = "Fast Length", group = "Momentum Settings")
+MediumLength                = input.int(32,         step = 1, title = "Medium Length", group = "Momentum Settings")
+SlowLength                  = input.int(64,         step = 1, title = "Slow Length", group = "Momentum Settings")
+zerolag                     = input(true,           title ="Use Zero Lag", group = "Momentum Settings")
+showtrend                   = input(false,          title ="Show Momentum Line", group = "Momentum Settings")
+
+//-----------------------------------------------------------------------------}
+//Risk Settings
+//-----------------------------------------------------------------------------{
+IniFund                     = input.int(200,        minval = 100, step = 100, title = "Initial Fund", group="Risk Settings")
+StdLength                   = input.int(25,         title = "Standard Deviation Length", group="Risk Settings")
+TargetRisk                  = input.float(0.07,      maxval = 1, step = 0.01, title = "Target Risk (%)", group="Risk Settings")
+DeviationPer                = input.float(0.1,      maxval = 1, step = 0.1, title = "Momentum Change Limit (%)", group="Risk Settings")
+SmoothOptLength             = input.int(5,          title = "Smooth Optimal Position Length", group="Risk Settings")
+SmoothOpt                   = input(true,           title="Smooth Optimal Position", group="Risk Settings")
+MarginCal                   = input(true,           title="Margin Account", group="Risk Settings")
+
+//------------------------------------------------------------------------------
+//Session Settings
+//-----------------------------------------------------------------------------{
+sesa_txt        = input('New York', '', inline = 'sesa', group = 'Session Settings')
+sesa_ses        = input.session('1300-1700', '', inline = 'sesa', group = 'Session Settings')
+
+sesb_txt        = input('London', '', inline = 'sesb', group = 'Session Settings')
+sesb_ses        = input.session('0100-1600', '', inline = 'sesb', group = 'Session Settings')
+
+tz_incr         = input.int(0, 'UTC (+/-)', group = 'Session Settings')
+use_exchange    = input(false, 'Use Exchange Timezone', group = 'Session Settings')
+
+//-----------------------------------------------------------------------------}
+//Sessions Calulation
+//-----------------------------------------------------------------------------{
+tf              = timeframe.period
+
+var tz          = use_exchange ? syminfo.timezone :
+  str.format('UTC{0}{1}', tz_incr >= 0 ? '+' : '-', math.abs(tz_incr))
+
+is_sesa         = math.sign(nz(time(tf, sesa_ses, tz)))
+is_sesb         = math.sign(nz(time(tf, sesb_ses, tz)))
+
+is_trading_session = is_sesa + is_sesb
+
+//------------------------------------------------------------------------------
+//Turtle Trade Channels Variables
+//-----------------------------------------------------------------------------{
+lower                       = ta.lowest(length)
+upper                       = ta.highest(length)
+up                          = ta.highest(high, length)
+down                        = ta.lowest(low, length)
+sup                         = ta.highest(high, len2)
+sdown                       = ta.lowest(low, len2)
+
+//------------------------------------------------------------------------------
+//Turtle Trade Channels Calucation
+//-----------------------------------------------------------------------------{
+K1                          = ta.barssince(high >= up[1]) <= ta.barssince(low <= down[1]) ? down : up
+barssince_1                 = ta.barssince(high >= up[1])
+barssince_2                 = ta.barssince(low <= down[1])
+K2                          = barssince_1 <= barssince_2 ? sdown : sup
+K3                          = close > K1 ? down : na
+K4                          = close < K1 ? up : na
+
+buySignal                   = high == upper[1] or ta.crossover(high, upper[1])
+sellSignal                  = low == lower[1] or ta.crossover(lower[1], low)
+buyExit                     = low == sdown[1] or ta.crossover(sdown[1], low)
+sellExit                    = high == sup[1] or ta.crossover(high, sup[1])
+
+O1                          = ta.barssince(buySignal)
+O2                          = ta.barssince(sellSignal)
+O3                          = ta.barssince(buyExit)
+O4                          = ta.barssince(sellExit)
+
+E1                          = ta.barssince(buySignal[1])
+E2                          = ta.barssince(sellSignal[1])
+E3                          = ta.barssince(buyExit[1])
+E4                          = ta.barssince(sellExit[1])
+
+//-----------------------------------------------------------------------------}
+//Stochastic Calculation
+//-----------------------------------------------------------------------------{
+StochasticK                 = ta.sma(ta.stoch(close, high, low, periodK), smoothK)
+StochasticD                 = ta.sma(StochasticK, periodD)
+
+//-----------------------------------------------------------------------------}
+//Momentum Calculation
+//-----------------------------------------------------------------------------{
+//Fast Momentum
+//-----------------------------------------------------------------------------{
+lsmaRF                      = ta.ema(close, FastLength)
+lsmaRFS                     = ta.ema(lsmaRF, FastLength)
+eqF                         = lsmaRF - lsmaRFS
+FastEMA                     = zerolag ? lsmaRF + eqF : ta.ema(close, FastLength)
+
+lsmaRM                      = ta.ema(close, (FastLength*4))
+lsmaRMS                     = ta.ema(lsmaRM, (FastLength*4))
+eqM                         = lsmaRM - lsmaRMS
+FastSEMA                    = zerolag ? lsmaRM + eqM : ta.ema(close, (FastLength*4))
+
+//Medium Momentum
+//-----------------------------------------------------------------------------{
+lsmaR5                      = ta.ema(close, MediumLength)
+lsmaR5S                     = ta.ema(lsmaR5, MediumLength)
+eq5                         = lsmaR5 - lsmaR5S
+MediumEMA                   = zerolag ? lsmaR5 + eq5 : ta.ema(close, MediumLength)
+
+lsmaR5A                     = ta.ema(close, (MediumLength*4))
+lsmaR5SA                    = ta.ema(lsmaR5A, (MediumLength*4))
+eq5A                        = lsmaR5A - lsmaR5SA
+MediumSEMA                  = zerolag ? lsmaR5A + eq5A : ta.ema(close, (MediumLength*4))
+
+//Slow Momentum
+//-----------------------------------------------------------------------------{
+lsmaR6                      = ta.ema(close, SlowLength)
+lsmaR6S                     = ta.ema(lsmaR6, SlowLength)
+eq6                         = lsmaR6 - lsmaR6S
+SlowEMA                     = zerolag ? lsmaR6 + eq6 : ta.ema(close, SlowLength)
+
+lsmaR6A                     = ta.ema(close, (SlowLength*4))
+lsmaR6SA                    = ta.ema(lsmaR6A, (SlowLength*4))
+eq6A                        = lsmaR6A - lsmaR6SA
+SlowSEMA                    = zerolag ? lsmaR6A + eq6A : ta.ema(close, (SlowLength*4))
+
+//-----------------------------------------------------------------------------}
+//Momentum Forcast Calculation
+//-----------------------------------------------------------------------------{
+var float CappedForc        = na
+var float CappedForcF       = na
+var float CappedForcM       = na
+var float CappedForcS       = na
+
+//Instrument Risk Calculation
+//-----------------------------------------------------------------------------{
+PercentChange               = array.new_float(0)
+AdjustedLength              = StdLength - 1
+
+// Loop through the last price change and add them to the array
+for i = 0 to AdjustedLength
+    array.push(PercentChange, ((close[i]-close[i+1])/close[i+1]))
+
+// Calculate the standard deviation of the percent change
+DailyPVol                   = math.round(array.stdev(PercentChange, false), 6)
+InstRisk                    = math.round((DailyPVol * 16), 6)
+
+//Fast Momentum Forecast
+//-----------------------------------------------------------------------------{
+RiskAdjF                    = (FastEMA - FastSEMA) / DailyPVol
+ScaledForcF                 = RiskAdjF * 4.1
+
+if ScaledForcF <= -20
+    CappedForcF             := -20
+else if ScaledForcF > -20 and ScaledForcF < 20
+    CappedForcF             := ScaledForcF
+else if ScaledForcF >= 20
+    CappedForcF             := 20  
+
+//Medium Momentum Forecast
+//-----------------------------------------------------------------------------{
+RiskAdjM                    = (MediumEMA - MediumSEMA) / DailyPVol
+ScaledForcM                 = RiskAdjM * 2.79
+
+if ScaledForcM <= -20
+    CappedForcM             := -20
+else if ScaledForcM > -20 and ScaledForcM < 20
+    CappedForcM             := CappedForcM
+else if ScaledForcM >= 20
+    CappedForcM             := 20 
+
+//Slow Momentum Forecast
+//-----------------------------------------------------------------------------{
+RiskAdjS                    = (SlowEMA - SlowSEMA) / DailyPVol
+ScaledForcS                 = RiskAdjS * 1.91
+
+if ScaledForcS <= -20
+    CappedForcS             := -20
+else if ScaledForcS > -20 and ScaledForcS < 20
+    CappedForcS             := ScaledForcS
+else if ScaledForcS >= 20
+    CappedForcS             := 20 
+
+//Momentum Forecast Combination
+//-----------------------------------------------------------------------------{
+ComCappedForc               = (CappedForcF + CappedForcM + CappedForcS) / 3
+
+if ComCappedForc <= -20
+    CappedForc              := -20
+else if ComCappedForc > -20 and ComCappedForc < 20
+    CappedForc              := ComCappedForc
+else if ComCappedForc >= 20
+    CappedForc              := 20 
+
+//-----------------------------------------------------------------------------}
+//Notional Exposure & Risk-Adjusted Position
+//-----------------------------------------------------------------------------{
+TrandRiskFactor             = MarginCal ? (CappedForc / 10) : (CappedForc / 20)
+
+OptimalSizing               = (TrandRiskFactor * IniFund * TargetRisk) / (InstRisk * close)
+RawOptimalPosition          = math.round(OptimalSizing, 0)
+
+OptimalPosition             = SmoothOpt ? ta.ema(RawOptimalPosition, SmoothOptLength) : RawOptimalPosition
+
+//Buffer Zone
+//-----------------------------------------------------------------------------{
+BufferWidth                 = (DeviationPer * IniFund * TargetRisk) / (InstRisk * close)
+LowerBuffer                 = math.round(OptimalPosition - BufferWidth, 1)
+UpperBuffer                 = math.round(OptimalPosition + BufferWidth, 1)
+CurrentSize                 = strategy.position_size
+
+//Current Proportion
+//-----------------------------------------------------------------------------{
+CurrentProportion           = strategy.position_size
+
+if CurrentProportion >= 1 and MarginCal == true
+    CurrentProportion       := CurrentProportion
+else if CurrentProportion >= 1 and MarginCal == false
+    CurrentProportion       := 1
+
+RecSize                     = math.round(OptimalPosition - strategy.position_size, 1)
+
+//-----------------------------------------------------------------------------}
+//Momentum Filter Calculation
+//-----------------------------------------------------------------------------{
+Trenddiff                   = SlowEMA - SlowSEMA
+StrongBullish               = Trenddiff[0] > Trenddiff[1] and Trenddiff >= 0 and is_trading_session
+StrongBearish               = Trenddiff[0] < Trenddiff[1] and Trenddiff < 0 and is_trading_session
+Bullish                     = Trenddiff[0] < Trenddiff[1] and Trenddiff >= 0 and is_trading_session
+Bearish                     = Trenddiff[0] > Trenddiff[1] and Trenddiff < 0 and is_trading_session
+
+//Position Adjustment Signal & Sizing
+//-----------------------------------------------------------------------------{
+BuyBufferGap                = LowerBuffer - CurrentSize > 0
+InitialBuyQty               = math.abs(RecSize)
+BuyQty                      = math.round(LowerBuffer - CurrentSize, 1)
+AdjustBuyQty                = math.round(CurrentSize - LowerBuffer, 1)
+ExitBuyQty                  = math.round(CurrentSize, 1)
+
+InitialBuy                  = ta.crossover(SlowEMA, SlowSEMA) and RecSize > 0
+Buy                         = ContrarianEntry ? (buyExit and O1 < O3[1] and StrongBullish and BuyBufferGap == true) or (buyExit and O1 < O3[1] and Bullish and BuyBufferGap == true) : (buySignal and O3 < O1[1] and StrongBullish and BuyBufferGap == true) or (buySignal and O3 < O1[1] and Bullish and BuyBufferGap == true) or (ta.crossover(StochasticK, stocBuyTh) and StrongBullish and BuyBufferGap == true) or (ta.crossover(StochasticK, stocBuyTh) and Bullish and BuyBufferGap == true)
+AdjustBuy                   = (buyExit and O1 < O3[1] and StrongBullish and CurrentSize > UpperBuffer and CurrentSize > 0) or (buyExit and O1 < O3[1] and Bullish and CurrentSize > UpperBuffer and CurrentSize > 0) or (sellSignal and O4 < O2[1] and StrongBullish and CurrentSize > UpperBuffer and CurrentSize > 0) or (sellSignal and O4 < O2[1] and Bullish and CurrentSize > UpperBuffer and CurrentSize > 0) or (ta.crossunder(StochasticK, stocSellTh) and StrongBullish and CurrentSize > UpperBuffer and CurrentSize > 0) or (ta.crossunder(StochasticK, stocSellTh) and Bullish and CurrentSize > UpperBuffer and CurrentSize > 0) or (ta.crossunder(StochasticK, StochasticD) and StochasticK > stocSellTh and StrongBullish and CurrentSize > UpperBuffer and CurrentSize > 0) or (ta.crossunder(StochasticK, StochasticD) and StochasticK > stocSellTh and Bullish and CurrentSize > UpperBuffer and CurrentSize > 0)
+ExitBuy                     = ta.crossunder(SlowEMA, SlowSEMA)
+
+SellBufferGap               = UpperBuffer - CurrentSize < 0
+InitialSellQty              = math.abs(RecSize)
+SellQty                     = math.abs(math.round(UpperBuffer - CurrentSize, 1))
+AdjustSellQty               = math.abs(math.round(CurrentSize - UpperBuffer, 1))
+ExitSellQty                 = math.abs(math.round(CurrentSize, 1))
+
+InitialSell                 = ta.crossunder(SlowEMA, SlowSEMA) and RecSize < 0
+Sell                        = ContrarianEntry ? (sellExit and O2 < O4[1] and StrongBearish and SellBufferGap == true) or (sellExit and O2 < O4[1] and Bearish and SellBufferGap == true) : (sellSignal and O4 < O2[1] and StrongBearish and SellBufferGap == true) or (sellSignal and O4 < O2[1] and Bearish and SellBufferGap == true) or (ta.crossunder(StochasticK, stocSellTh) and StrongBearish and SellBufferGap == true) or (ta.crossunder(StochasticK, stocSellTh) and Bearish and SellBufferGap == true)
+AdjustSell                  = (sellExit and O2 < O4[1] and StrongBearish and CurrentSize < LowerBuffer and CurrentSize < 0) or (sellExit and O2 < O4[1] and Bearish and CurrentSize < LowerBuffer and CurrentSize < 0) or (buySignal and O3 < O1[1] and StrongBearish and CurrentSize < LowerBuffer and CurrentSize < 0) or (buySignal and O3 < O1[1] and Bearish and CurrentSize < LowerBuffer and CurrentSize < 0) or (ta.crossover(StochasticK, stocBuyTh) and StrongBearish and CurrentSize < LowerBuffer and CurrentSize < 0) or (ta.crossover(StochasticK, stocBuyTh) and Bearish and CurrentSize < LowerBuffer and CurrentSize < 0) or (ta.crossover(StochasticK, StochasticD) and StochasticK < stocBuyTh and StrongBearish and CurrentSize < LowerBuffer and CurrentSize < 0) or (ta.crossover(StochasticK, StochasticD) and StochasticK < stocBuyTh and Bearish and CurrentSize < LowerBuffer and CurrentSize < 0)
+ExitSell                    = ta.crossover(SlowEMA, SlowSEMA)
+
+//-----------------------------------------------------------------------------}
+//Strategy
+//-----------------------------------------------------------------------------{ 
+if InitialBuy
+    strategy.entry("B", strategy.long, qty = InitialBuyQty)
+else if Buy
+    strategy.entry("B", strategy.long, qty = BuyQty)
+else if AdjustBuy
+    strategy.close("B", qty = AdjustBuyQty)
+else if ExitBuy
+    strategy.close("B", qty = ExitBuyQty)
+
+if InitialSell
+    strategy.entry("S", strategy.short, qty = InitialSellQty)
+else if Sell
+    strategy.entry("S", strategy.short, qty = SellQty)
+else if AdjustSell
+    strategy.close("S", qty = AdjustSellQty)
+else if ExitSell
+    strategy.close("S", qty = ExitSellQty)
+
+// Calculate net profit and percentage profitable
+//-----------------------------------------------------------------------------{ 
+net_profit                  = strategy.netprofit
+percent_profitable          = math.round(strategy.wintrades / (strategy.wintrades + strategy.losstrades), 2)
+
+//Table Styling
+//-----------------------------------------------------------------------------{ 
+bgMColour                   = color.rgb(0, 0, 0, 30)
+bgSColour                   = color.rgb(0, 0, 0, 20)
+    
+if net_profit > 0
+    bgMColour               := color.rgb(8, 153, 129)
+    bgSColour               := color.rgb(8, 153, 129, 20)
+else
+    bgMColour               := color.rgb(242, 54, 69)
+    bgSColour               := color.rgb(242, 54, 69, 20)
+    
+//-----------------------------------------------------------------------------}
+//Summary Table
+//-----------------------------------------------------------------------------{ 
+table_data                  = table.new(position = position.bottom_right, columns = 1, rows = 8, bgcolor = color.rgb(0, 0, 0, 100), frame_width = 1, border_width = 1)
+
+table.cell(table_data, 0, 0, "MTT782", bgcolor = color.rgb(255, 255, 255, 70), text_size = size.normal, text_color = color.rgb(255, 255, 255))   
+table.cell(table_data, 0, 1, str.tostring("$" + str.tostring(math.round(net_profit, 0))), text_size = size.normal, bgcolor = bgMColour, text_color = color.rgb(255, 255, 255), text_halign  = text.align_center, tooltip = "Net Profit")
+table.cell(table_data, 0, 2, str.tostring(str.tostring(math.round(percent_profitable * 100, 0)) + "%"), text_size = size.normal, bgcolor = bgSColour, text_color = color.rgb(255, 255, 255), text_halign  = text.align_center, tooltip = "Percent Profitable")
+table.cell(table_data, 0, 3, str.tostring("$" + str.tostring(math.round(strategy.max_drawdown, 0))), text_size = size.normal, bgcolor = color.rgb(242, 54, 69, 30), text_color = color.rgb(255, 255, 255), text_halign  = text.align_center, tooltip = "Max Drawdown")
+table.cell(table_data, 0, 4, str.tostring(str.tostring(math.round(CurrentProportion, 1))), bgcolor = color.rgb(255, 255, 255, 90), text_size = size.normal, text_color = color.rgb(255, 255, 255), tooltip = "Percent Risk")
+
+//-----------------------------------------------------------------------------}
+//Entry & Exit Signal
+//-----------------------------------------------------------------------------{
+plotshape(InitialBuy,       title = "Initial Buy",  text = "▲", textcolor = color.white, style=shape.labelup, location=location.belowbar, color=color.rgb(8, 153, 129), size=size.tiny)
+plotshape(Buy,              title = "Buy",          text = "▲", textcolor = color.white, style=shape.labelup, location=location.belowbar, color=color.rgb(8, 153, 129), size=size.tiny)
+plotshape(AdjustBuy,        title = "Adjust Buy",   text = "✘", textcolor = color.white, style=shape.labeldown, location=location.abovebar, color=color.rgb(242, 54, 69, 50), size=size.tiny)
+plotshape(ExitBuy,          title = "Exit Buy",     text = "✘", textcolor = color.white, style=shape.labeldown, location=location.abovebar, color=color.rgb(242, 54, 69), size=size.tiny)
+
+plotshape(InitialSell,      title = "Initial Sell",  text = "▼", textcolor = color.white, style=shape.labeldown, location=location.abovebar, color=color.rgb(242, 54, 69), size=size.tiny)
+plotshape(Sell,             title = "Sell",          text = "▼", textcolor = color.white, style=shape.labeldown, location=location.abovebar, color=color.rgb(242, 54, 69), size=size.tiny)
+plotshape(AdjustSell,       title = "Adjust Sell",   text = "✘", textcolor = color.white, style=shape.labelup, location=location.belowbar, color=color.rgb(8, 153, 129, 50), size=size.tiny)
+plotshape(ExitSell,         title = "Exit Sell",     text = "✘", textcolor = color.white, style=shape.labelup, location=location.belowbar, color=color.rgb(8, 153, 129), size=size.tiny)
+//-----------------------------------------------------------------------------}
+//Bar & Trend Line Colours
+//-----------------------------------------------------------------------------{
+NeutralColor                = color.rgb(120, 123, 134, 65)
+StrongBullColor             = color.rgb(8, 153, 129)
+BullColor                   = color.rgb(8, 153, 129, 50)
+StrongBearishColor          = color.rgb(242, 54, 69)
+BearColor                   = color.rgb(242, 54, 69, 50)
+
+//Style Adjustment
+//-----------------------------------------------------------------------------{
+var col                     = color.rgb(120, 123, 134, 100)
+var fillG                   = color.rgb(120, 123, 134, 100)
+
+if Trenddiff[0] > Trenddiff[1] and Trenddiff >= 0 and showtrend == true
+    col                     := BullColor
+    fillG                   := color.rgb(8, 153, 129, 92)
+else if Trenddiff[0] < Trenddiff[1] and Trenddiff >= 0 and showtrend == true
+    col                     := BullColor
+    fillG                   := color.rgb(8, 153, 129, 96)
+else if Trenddiff[0] < Trenddiff[1] and Trenddiff < 0 and showtrend == true
+    col                     := BearColor
+    fillG                   := color.rgb(242, 54, 70, 92)
+else if Trenddiff[0] > Trenddiff[1] and Trenddiff < 0 and showtrend == true
+    col                     := BearColor
+    fillG                   := color.rgb(242, 54, 70, 96)
+else
+    col                     := color.rgb(120, 123, 134, 100)
+    fillG                   := color.rgb(120, 123, 134, 100)
+
+plotFastMA                  = plot(SlowEMA,     "Fast Momentum", color=col, linewidth=1) 
+plotSlowMA                  = plot(SlowSEMA,    "Slow Momentum", color=col, linewidth=1)
+
+fill(plotFastMA, plotSlowMA, color = fillG, title = "Momentum Color", fillgaps = true) 
+barcolor(StrongBullish ? StrongBullColor : StrongBearish ? StrongBearishColor : Bullish ? BullColor : Bearish ? BearColor : NeutralColor)
+
+//-----------------------------------------------------------------------------}
+//Alert
+//-----------------------------------------------------------------------------{
+if InitialBuy or Buy or AdjustBuy
+    alert("Buy Position Adjusted", alert.freq_once_per_bar_close)
+else if ExitBuy
+    alert("Exit Buy", alert.freq_once_per_bar_close)
