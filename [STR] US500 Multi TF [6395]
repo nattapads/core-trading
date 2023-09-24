@@ -14,9 +14,9 @@ showtrend                   = input(false,          title ="Show Momentum Line",
 //-----------------------------------------------------------------------------}
 //Risk Settings
 //-----------------------------------------------------------------------------{
-IniFund                     = input.int(10000,        minval = 100, step = 100, title = "Initial Fund", group="Risk Settings")
+IniFund                     = input.int(10000,      minval = 100, step = 100, title = "Initial Fund", group="Risk Settings")
 StdLength                   = input.int(25,         title = "Standard Deviation Length", group="Risk Settings")
-TargetRisk                  = input.float(0.07,      maxval = 1, step = 0.01, title = "Target Risk (%)", group="Risk Settings")
+TargetRisk                  = input.float(0.07,     maxval = 1, step = 0.01, title = "Target Risk (%)", group="Risk Settings")
 DeviationPer                = input.float(0.1,      maxval = 1, step = 0.1, title = "Momentum Change Limit (%)", group="Risk Settings")
 SmoothOptLength             = input.int(8,          title = "Smooth Optimal Position Length", group="Risk Settings")
 SmoothOpt                   = input(true,           title="Smooth Optimal Position", group="Risk Settings")
