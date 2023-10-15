@@ -1,0 +1,348 @@
+//NSal
+//@version=5
+strategy("[STR] S&P Divergent & Convergent & Mean Reversion [6395]", overlay = true, margin_long = 20, margin_short = 20, pyramiding = 100, initial_capital = 100000, risk_free_rate = 1, commission_value = 0.165, process_orders_on_close = true)
+
+//------------------------------------------------------------------------------
+//Settings
+//-----------------------------------------------------------------------------{
+start_time                  = input.time(timestamp("Jan 01 1970 00:00:00"), title = "Start Time")
+in_time_window              = time >= start_time
+
+//-----------------------------------------------------------------------------}
+//Momentum  Settings
+//-----------------------------------------------------------------------------{
+MoProp                      = input.float(0.2,      maxval = 1, step = 0.1, title = "Momentum Proportion (%)", group="Momentum Settings")
+FastScalar                  = input.float(4.10,     step = 0.01, title = "EMA 16 Scalar", group = "Momentum Settings")
+MediumScalar                = input.float(2.79,     step = 0.01, title = "EMA 32 Scalar", group = "Momentum Settings")
+SlowScalar                  = input.float(1.91,     step = 0.01, title = "EMA 64 Scalar", group = "Momentum Settings")
+zerolag                     = input(false,          title ="Acceleration-Adjusted Momentum", group = "Momentum Settings")
+
+//-----------------------------------------------------------------------------}
+//Mean Reversion Settings
+//-----------------------------------------------------------------------------{
+MeProp                      = input.float(0.2,      maxval = 1, step = 0.1, title = "Mean Reversion (%)", group = "Mean Reversion Settings")
+Equilibriumlength           = input.int(5,          step = 1, title = "Equilibrium Average Length", group = "Mean Reversion Settings")
+Quantilelength              = input.int(10,         step = 1, title = "Quantile Average Length", group = "Mean Reversion Settings")
+MeanForecScalar             = input.float(20,       step = 0.1, title = "Mean-Reversion Scalar", group = "Mean Reversion Settings")
+
+//-----------------------------------------------------------------------------}
+//Carry Settings
+//-----------------------------------------------------------------------------{
+CrProp                      = input.float(0.6,      maxval = 1, step = 0.1, title = "Carry Proportion (%)", group="Carry Settings", tooltip = "Higher proportion causes higher percent risk")
+ExpectedDiv                 = input.float(0.03,     maxval = 1, step = 0.001, title = "Expected Annualised Return % (%)", group="Carry Settings", tooltip = "Expacted dividend yield or Median dividend yield")
+CrScalar                    = input.int(30,         step = 1, title = "Carry Scalar", group = "Carry Settings")
+
+//-----------------------------------------------------------------------------}
+//Risk Settings
+//-----------------------------------------------------------------------------{
+IniFund                     = input.int(100000,     minval = 100, step = 100, title = "Initial Fund", group = "Risk Settings")
+SPStdLength                 = input.int(22,         title = "Simple SD Length", group="Risk Settings")
+EPStdLength                 = input.int(32,         title = "Exponential SD Length", group="Risk Settings")
+TargetRisk                  = input.float(0.20,     maxval = 1, step = 0.01, title = "Target Risk (%)", group="Risk Settings", tooltip = "20% is recommended for trading less than 3 instruments")
+DeviationPer                = input.float(0.1,      maxval = 1, step = 0.1, title = "Change Sensitivity (%)", group="Risk Settings", tooltip = "Higher sensitivity causes less frequent trades, and lower trading costs")
+FDM                         = input.float(1.38,     step = 0.01, title = "Forecast Diversification Multiplier", group = "Risk Settings")
+RiskFree                    = input.float(0.01,     step = 0.01, title = "Risk-free Rate (%)", group = "Risk Settings")
+EPStdCal                    = input(true,           title = "Use Exponential Standard Deviation", group="Risk Settings")
+MarginCal                   = input(false,          title = "Margin Account", group="Risk Settings")
+FixIniFund                  = input(false,          title = "Fix Initial Fund for Optimal Calculation", group = "Risk Settings")
+
+//-----------------------------------------------------------------------------{
+//Instrument Risk Calculation
+//-----------------------------------------------------------------------------{
+PercentChange               = array.new_float(0)
+ReturnChange                = close
+Lamda                       = 2.0 / (EPStdLength + 1.0)
+
+// Loop through the last price change and add them to the array
+if EPStdCal == true
+    for i = 0 to EPStdLength
+        ReturnChange        = (ReturnChange[i] - ReturnChange[i+1]) / ReturnChange[i+1]
+        LambaWeight         = math.pow((1 - Lamda), i)
+        array.push(PercentChange, (ReturnChange * LambaWeight))
+else
+    for i = 0 to SPStdLength
+        ReturnChange        = (ReturnChange[i] - ReturnChange[i+1]) / ReturnChange[i+1]
+        array.push(PercentChange, ReturnChange)
+
+// Calculate the standard deviation of the percent change
+RawDailyPercentVol          = math.round(array.stdev(PercentChange, false), 6)
+
+// Calculate 8-year (2000 Records) average of SDs (for Exponential SD only)
+Return8yr                   = array.new_float(0)
+
+if EPStdCal == true
+    for i = 0 to 2000
+        array.push(Return8yr, RawDailyPercentVol[i])
+
+DailyPercentVol8yr          = array.avg(Return8yr)
+
+// Annualising Instrument Risk
+DailyPercentVol             = EPStdCal ? ((0.3 * DailyPercentVol8yr) + (0.7 * RawDailyPercentVol)) : RawDailyPercentVol
+InstRisk                    = math.round((DailyPercentVol * 16), 6)
+DailyPriceVol               = DailyPercentVol * close
+
+//-----------------------------------------------------------------------------}
+//Momentum Forcast Calculation
+//-----------------------------------------------------------------------------{
+FastLength                  = 16
+MediumLength                = 32
+SlowLength                  = 64
+
+scalforecastMo(length, volatility, scalar) =>
+    Slength                 = length * 4
+
+    if zerolag == true
+        Fema                = ta.ema(close, length)
+        Fsmoema             = ta.ema(Fema, length)
+        Feq                 = Fema - Fsmoema
+        Fzlema              = Fema + Feq
+        Sema                = ta.ema(close, Slength)
+        Ssmoema             = ta.ema(Sema, Slength)
+        Seq                 = Sema - Ssmoema
+        Szlema              = Sema + Seq
+        RiskAdjusted        = (Fzlema - Szlema) / volatility
+        ScaledForecast      = RiskAdjusted * scalar
+    else
+        Fzlema              = ta.ema(close, length)
+        Szlema              = ta.ema(close, Slength)
+        RiskAdjusted        = (Fzlema - Szlema) / volatility
+        ScaledForecast      = RiskAdjusted * scalar
+
+ScaledForcF                 = scalforecastMo(FastLength, DailyPriceVol, FastScalar)
+ScaledForcM                 = scalforecastMo(MediumLength, DailyPriceVol, MediumScalar)
+ScaledForcS                 = scalforecastMo(SlowLength, DailyPriceVol, SlowScalar)
+
+//Capped Momentum Forecast
+//-----------------------------------------------------------------------------{
+capforecastMo(scaledForc) =>
+    var float CappedForcMo  = na
+
+    if scaledForc <= -20
+        CappedForcMo        := -20
+    else if scaledForc > -20 and scaledForc < 20
+        CappedForcMo        := scaledForc
+    else if scaledForc >= 20
+        CappedForcMo        := 20
+
+CappedForcF                 = capforecastMo(ScaledForcF)
+CappedForcM                 = capforecastMo(ScaledForcM)
+CappedForcS                 = capforecastMo(ScaledForcS)
+
+CappedForcMoAr              = array.from(CappedForcF, CappedForcM, CappedForcS)
+
+//-----------------------------------------------------------------------------}
+//Carry Forcast Calculation
+//-----------------------------------------------------------------------------{
+capforecastCr(ExpectedDiv, smoothLength, InstRisk, ForecastScalar) =>
+    var float CappedForcCr  = na
+
+    CrForc                  = ExpectedDiv * ForecastScalar / InstRisk
+    scaledForcCr            = ta.ema(CrForc, smoothLength)
+
+    if scaledForcCr <= -20
+        CappedForcCr        := -20
+    else if scaledForcCr > -20 and scaledForcCr < 20
+        CappedForcCr        := scaledForcCr
+    else if scaledForcCr >= 20
+        CappedForcCr        := 20 
+
+CappedForcCr20              = capforecastCr(ExpectedDiv, 20, InstRisk, CrScalar)
+CappedForcCr60              = capforecastCr(ExpectedDiv, 60, InstRisk, CrScalar)
+CappedForcCr120             = capforecastCr(ExpectedDiv, 120, InstRisk, CrScalar)
+
+CappedForcCrAr              = array.from(CappedForcCr20, CappedForcCr60, CappedForcCr120)
+
+//-----------------------------------------------------------------------------}
+//Mean Reversion Forcast Calculation
+//-----------------------------------------------------------------------------{
+//Equilibrium & Risk Adjusted Forecast Calculation
+//-----------------------------------------------------------------------------{
+Equilibrium                 = ta.ema(close, Equilibriumlength)
+RawForcMe                   = Equilibrium - close
+RiskAdjForcMe               = RawForcMe / DailyPercentVol
+
+//Volatility Calculation
+//-----------------------------------------------------------------------------{
+SigmaITAr                   = array.new_float(0)
+for i = 0 to 1256
+    array.push(SigmaITAr, DailyPercentVol[i])
+
+MeanSigmaIT                 = array.avg(SigmaITAr)
+VolatilityMe                = DailyPercentVol / MeanSigmaIT
+
+VolatilityMeAr              = array.new_float(0)
+for i = 0 to 2000
+    array.push(VolatilityMeAr, VolatilityMe[i])
+
+QuantileMe                  = VolatilityMe - array.min(VolatilityMeAr)
+QuantileRange               = array.max(VolatilityMeAr) - array.min(VolatilityMeAr)
+PercentQMe                  = QuantileMe / QuantileRange
+ModifiedQuantile            = 2 - (1.5 * (PercentQMe / 10))
+MeanVolatilityEMA           = ta.ema(ModifiedQuantile, Quantilelength)
+ModifiedRiskAdjForecMe      = RiskAdjForcMe * MeanVolatilityEMA
+
+//Scaled Forcast Calculation
+//-----------------------------------------------------------------------------{
+ScaledForcMe                = ModifiedRiskAdjForecMe * MeanForecScalar
+CappedForcMe                = capforecastMo(ScaledForcF)
+
+//-----------------------------------------------------------------------------{
+//All Forecast Combination
+//-----------------------------------------------------------------------------{
+CappedForcMo                = array.avg(CappedForcMoAr)
+CappedForcCr                = array.avg(CappedForcCrAr)
+
+//All Forecast Combination
+//-----------------------------------------------------------------------------{
+var float CappedCombForc    = na
+
+CombForc                    = (CappedForcMo * MoProp) + (CappedForcCr * CrProp) + (CappedForcMe * MeProp)
+ScalCombForc                = CombForc * FDM
+
+if ScalCombForc <= -20
+    CappedCombForc          := -20
+else if ScalCombForc > -20 and ScalCombForc < 20
+    CappedCombForc          := ScalCombForc
+else if ScalCombForc >= 20
+    CappedCombForc          := 20 
+
+AdjCombForc                 = MarginCal ? CappedCombForc / 10 : CappedCombForc / 20
+
+//-----------------------------------------------------------------------------}
+//Notional Exposure & Risk-Adjusted Position
+//-----------------------------------------------------------------------------{
+OptimalSizing               = FixIniFund ? (AdjCombForc * IniFund * TargetRisk) / (InstRisk * close) : (AdjCombForc * strategy.equity * TargetRisk) / (InstRisk * close)
+OptimalPosition             = math.round(OptimalSizing, 0)
+
+//Buffer Zone
+//-----------------------------------------------------------------------------{
+BufferWidth                 = FixIniFund ? (DeviationPer * IniFund * TargetRisk) / (InstRisk * close) : (DeviationPer * strategy.equity * TargetRisk) / (InstRisk * close)
+LowerBuffer                 = math.round(OptimalPosition - BufferWidth, 1)
+UpperBuffer                 = math.round(OptimalPosition + BufferWidth, 1)
+CurrentSize                 = strategy.position_size
+
+//-----------------------------------------------------------------------------{
+//Position Adjustment Signal & Sizing
+//-----------------------------------------------------------------------------{
+BuyQty                      = math.abs(math.round(LowerBuffer - CurrentSize, 0))
+AdjBuyQty                   = math.abs(math.round(CurrentSize - UpperBuffer, 0))
+
+Buy                         = MarginCal ? OptimalPosition > 0 and OptimalPosition > CurrentSize and CurrentSize < LowerBuffer and BuyQty >= 1 : OptimalPosition > 0 and OptimalPosition > CurrentSize and CurrentSize < LowerBuffer and BuyQty >= 1 and strategy.equity > (OptimalPosition * close)
+AdjustBuy                   = CurrentSize > 0 and CurrentSize > UpperBuffer and AdjBuyQty >= 1
+
+SellQty                     = math.abs(math.round(UpperBuffer - CurrentSize, 0))
+AdjSellQty                  = math.abs(math.round(CurrentSize - LowerBuffer, 0))
+
+Sell                        = MarginCal ? OptimalPosition < 0 and OptimalPosition < CurrentSize and CurrentSize > UpperBuffer and SellQty >= 1 : OptimalPosition < 0 and OptimalPosition < CurrentSize and CurrentSize > UpperBuffer and SellQty >= 1 and strategy.equity > math.abs(OptimalPosition * close)
+AdjustSell                  = CurrentSize < 0 and CurrentSize < LowerBuffer and AdjSellQty >= 1
+
+//-----------------------------------------------------------------------------}
+//Strategy
+//-----------------------------------------------------------------------------{ 
+if Buy and in_time_window
+    strategy.entry("B", strategy.long, qty = BuyQty)
+else if AdjustBuy and in_time_window
+    strategy.close("B", qty = AdjBuyQty)
+
+if Sell and in_time_window
+    strategy.entry("S", strategy.short, qty = SellQty)
+else if AdjustSell and in_time_window
+    strategy.close("S", qty = AdjSellQty)
+
+// Calculate Strategy Performance
+//-----------------------------------------------------------------------------{ 
+avgDrawdown() =>
+    winArr                  = array.new_float()
+    lossArr                 = array.new_float()
+    
+    for i = 0 to strategy.closedtrades -1 
+        
+        drawdown            = strategy.closedtrades.max_drawdown(i)
+        costBasis           = strategy.closedtrades.entry_price(i)
+        drawdownPerc        = drawdown / (costBasis * strategy.closedtrades.size(i))
+        
+        isWin               = strategy.closedtrades.profit(i) >= 0
+        
+        if isWin
+            array.push(winArr, drawdownPerc)
+        else
+            array.push(lossArr, drawdownPerc)
+
+    [array.avg(winArr), array.avg(lossArr)]
+
+TotalYears                  = bar_index / 256
+RawAvgAnnualReturn          = strategy.netprofit / (strategy.initial_capital * TotalYears)
+AvgAnnualReturn             = RawAvgAnnualReturn * 100
+SharpeRatio                 = (RawAvgAnnualReturn - RiskFree) / InstRisk
+
+[win, loss]                 = avgDrawdown()
+AvgWinDD                    = win
+AvgLossDD                   = loss
+AvgDD                       = (AvgWinDD + AvgLossDD) / 2
+
+//Table Styling
+//-----------------------------------------------------------------------------{ 
+bgMColour                   = color.rgb(0, 0, 0, 30)
+bgSColour                   = color.rgb(0, 0, 0, 20)
+    
+if strategy.netprofit > 0
+    bgMColour               := color.rgb(8, 153, 129)
+    bgSColour               := color.rgb(8, 153, 129, 20)
+else
+    bgMColour               := color.rgb(242, 54, 69)
+    bgSColour               := color.rgb(242, 54, 69, 20)
+
+//Current Proportion
+//-----------------------------------------------------------------------------{
+CurrentHoldingValue         = strategy.position_size * close
+CurrentProportion           = CurrentHoldingValue / strategy.equity
+
+//-----------------------------------------------------------------------------}
+//Summary Table
+//-----------------------------------------------------------------------------{ 
+table_data                  = table.new(position = position.bottom_right, columns = 1, rows = 8, bgcolor = color.rgb(0, 0, 0, 100), frame_width = 1, border_width = 1)
+
+table.cell(table_data, 0, 0, "DCM782", bgcolor = color.rgb(255, 255, 255, 70), text_size = size.normal, text_color = color.rgb(255, 255, 255))   
+table.cell(table_data, 0, 1, str.tostring(AvgAnnualReturn, format.percent) , text_size = size.normal, bgcolor = bgMColour, text_color = color.rgb(255, 255, 255), text_halign  = text.align_center, tooltip = "Average Annual Return")
+table.cell(table_data, 0, 2, str.tostring(math.round(SharpeRatio, 3)), text_size = size.normal, bgcolor = bgSColour, text_color = color.rgb(255, 255, 255), text_halign  = text.align_center, tooltip = "Sharpe Ratio")
+table.cell(table_data, 0, 3, str.tostring(AvgDD * 100, format.percent), text_size = size.normal, bgcolor = color.rgb(242, 54, 69, 30), text_color = color.rgb(255, 255, 255), text_halign  = text.align_center, tooltip = "Average Drawdown")
+table.cell(table_data, 0, 4, str.tostring(InstRisk * 100, format.percent), text_size = size.normal, bgcolor = color.rgb(242, 54, 70, 70), text_color = color.rgb(255, 255, 255), text_halign  = text.align_center, tooltip = "Standard Deviation")
+table.cell(table_data, 0, 5, str.tostring(CurrentProportion * 100, format.percent), bgcolor = color.rgb(255, 255, 255, 90), text_size = size.normal, text_color = color.rgb(255, 255, 255), tooltip = "Percent Risk")
+
+//-----------------------------------------------------------------------------}
+//Entry & Exit Signal
+//-----------------------------------------------------------------------------{
+plotshape(Buy,              title = "Buy",          text = "▲", textcolor = color.white, style = shape.labelup, location = location.belowbar, color = color.rgb(8, 153, 129, 70), size = size.tiny)
+plotshape(AdjustBuy,        title = "Adjust Buy",   text = "✘", textcolor = color.white, style = shape.labeldown, location = location.abovebar, color = color.rgb(242, 54, 69, 70), size = size.tiny)
+
+plotshape(Sell,             title = "Sell",          text = "▼", textcolor = color.white, style = shape.labeldown, location = location.abovebar, color = color.rgb(242, 54, 69, 70), size = size.tiny)
+plotshape(AdjustSell,       title = "Adjust Sell",   text = "✘", textcolor = color.white, style = shape.labelup, location = location.belowbar, color = color.rgb(8, 153, 129, 70), size = size.tiny)
+
+//-----------------------------------------------------------------------------}
+//Bar & Trend Line Colours
+//-----------------------------------------------------------------------------{
+NeutralColor                = color.rgb(120, 123, 134, 65)
+StrongBullColor             = color.rgb(8, 153, 129)
+BullColor                   = color.rgb(8, 153, 129, 50)
+StrongBearishColor          = color.rgb(242, 54, 69)
+BearColor                   = color.rgb(242, 54, 69, 50)
+
+//-----------------------------------------------------------------------------}
+//Momentum Filter Calculation
+//-----------------------------------------------------------------------------{
+StrongBullish               = AdjCombForc > 0 and AdjCombForc > AdjCombForc[1]
+StrongBearish               = AdjCombForc < 0 and AdjCombForc < AdjCombForc[1]
+Bullish                     = AdjCombForc > 0 and AdjCombForc < AdjCombForc[1]
+Bearish                     = AdjCombForc < 0 and AdjCombForc > AdjCombForc[1]
+
+//Bar Colour
+//-----------------------------------------------------------------------------{
+barcolor(StrongBullish ? StrongBullColor : StrongBearish ? StrongBearishColor : Bullish ? BullColor : Bearish ? BearColor : NeutralColor)
+
+//-----------------------------------------------------------------------------}
+//Alert
+//-----------------------------------------------------------------------------{
+if Buy
+    alert("Buy Position Adjusted", alert.freq_once_per_bar_close)
+else if AdjustBuy
+    alert("Exit Buy", alert.freq_once_per_bar_close)
